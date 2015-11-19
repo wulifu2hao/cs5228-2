@@ -72,8 +72,8 @@ acceptable_image_formats = [".jpg", ".png", ".jpeg"]
 CHOP_UNIT = 10
 NUM_OF_PIECES = CHOP_UNIT*CHOP_UNIT
 
-detector = cv2.SIFT(nfeatures=1000)
-
+detector = cv2.SIFT()
+# detector = cv2.SIFT(nfeatures=1000)
 
 
 classes = get_classes(train_dir)
@@ -98,10 +98,12 @@ if isfile(join(result_dir, "sift_features.mat")):
 	sift_features = obj['sift_features']
 	train_image_path = obj['train_image_path']
 	train_image_classes = obj['train_image_classes'][0]
+	class_mapping = obj['class_mapping']
 	print sift_features.shape
 	print sift_inverted_indexes.shape
 	print train_image_path.shape
 	print train_image_classes.shape
+	print class_mapping.shape
 else:
 	sift_inverted_indexes = []
 	sift_features = []
@@ -127,90 +129,43 @@ else:
 		"class_mapping":class_mapping,
 		"average_num_images_per_class":average_num_images_per_class
 		})
-
-test_image_path = join(train_dir, "n01440764", "n01440764_37.JPEG")
-test_image_class = 0
-test_image_idx = 2
-VALUE_OF_K = 10
-kps, descrs, shape = detect_sift_features(test_image_path, detector)
-height_unit = shape[0]/CHOP_UNIT + 1
-width_unit = shape[1]/CHOP_UNIT + 1
-
-# for test only
-# test_im = standarizeImage(cv2.imread(test_image_path))
-
-
-test_image_features_in_pieces = [[] for x in range(CHOP_UNIT*CHOP_UNIT)]
-
-
-for kp_idx, kp in enumerate(kps):
-	px, py = kp.pt
-
-	# for test only
-	# cv2.circle(test_im, (int(px), int(py)), 5, (0,255,0))
-
-	row = int(py)/height_unit
-	col = int(px)/width_unit
-	piece_idx = row*CHOP_UNIT + col
-	test_image_features_in_pieces[piece_idx].append(descrs[kp_idx])
-
-# for test only
-# dist = [len(features) for features in test_image_features_in_pieces]
-# print dist
-# cv2.imwrite(join(result_dir, "test_kp_position.jpg"), test_im)
-
-test_image_result_dir = join(result_dir, "good_piece")
-if not isdir(test_image_result_dir):
-	makedirs(test_image_result_dir)
-
 matcher = cv2.BFMatcher()
+for image_idx, test_image_path in enumerate(train_image_path):
 
-good_piece_idx = []
-for piece_idx, sift_feature_of_cur_piece in enumerate(test_image_features_in_pieces):
+	# test_image_path = join(train_dir, "n01440764", "n01440764_39.JPEG")
+	test_image_path = test_image_path.strip()
+	test_image_class = train_image_classes[image_idx]
+	test_image_idx = image_idx
+	VALUE_OF_K = 50
+	kps, descrs, shape = detect_sift_features(test_image_path, detector)
 
-	sift_features_without_this_image = [sift_features[f_idx] for f_idx in xrange(0, len(sift_features)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
-	sift_inverted_indexes_without_this_image = [sift_inverted_indexes[f_idx] for f_idx in xrange(0, len(sift_inverted_indexes)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
-	sift_features_without_this_image = np.array(sift_features_without_this_image, dtype=np.float32)
+	test_image_result_dir = join(result_dir, "demo_sift", basename(test_image_path))
+	# test_image_result_dir = join(result_dir, "good_sift", basename(test_image_path))
+	
+	if not isdir(test_image_result_dir):
+		makedirs(test_image_result_dir)
+	
+	# sift_features_without_this_image = [sift_features[f_idx] for f_idx in xrange(0, len(sift_features)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
+	# sift_inverted_indexes_without_this_image = [sift_inverted_indexes[f_idx] for f_idx in xrange(0, len(sift_inverted_indexes)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
+	# sift_features_without_this_image = np.array(sift_features_without_this_image, dtype=np.float32)
+	# matches = matcher.knnMatch(descrs, sift_features_without_this_image, k=VALUE_OF_K)
+	# good_kp_list = []
+	# for kp_idx, knnMatch in enumerate(matches):
+	# 	vote_matrix = np.zeros((len(class_mapping)))
+	# 	for match in knnMatch:
+	# 		(train_image_idx, train_piece_idx) = sift_inverted_indexes_without_this_image[match.trainIdx]
+	# 		vote_matrix[train_image_classes[train_image_idx]] += 1
+	# 	best_class_idx = np.argmax(vote_matrix)
+	# 	if best_class_idx == test_image_class:
+	# 		good_kp_list.append(kps[kp_idx])
 
-	sift_feature_of_cur_piece = np.array(sift_feature_of_cur_piece, dtype=np.float32)
-
-	matches = matcher.knnMatch(sift_feature_of_cur_piece, sift_features_without_this_image, k=VALUE_OF_K)
-	# matches = matcher.match(sift_feature_of_cur_piece, sift_features_without_this_image)
-	vote_matrix = np.zeros((len(train_image_path),NUM_OF_PIECES))
-	for knnMatch in matches:
-		for match in knnMatch:
-			(train_image_idx, train_piece_idx) = sift_inverted_indexes_without_this_image[match.trainIdx]
-			vote_matrix[train_image_idx][train_piece_idx] += 1
-	best_idx = np.argmax(vote_matrix)
-	best_image_idx = best_idx/NUM_OF_PIECES
-	best_piece_idx = best_idx%NUM_OF_PIECES
-	best_image_class = train_image_classes[best_image_idx]
-	if best_image_class == test_image_class and best_image_idx != test_image_idx:
-		good_piece_idx.append(piece_idx)
-
-# this part is for outputing the best match for each piece in a given test image
-	# cur_dir = join(test_image_result_dir, "%d"%piece_idx)
-	# if not isdir(cur_dir):
-	# 	makedirs(cur_dir)
-
-	# query_piece_row = piece_idx/CHOP_UNIT
-	# query_piece_col = piece_idx%CHOP_UNIT
-	# query_im = read_standarized_image_full(test_image_path)
-	# query_im = draw_grid(query_im, CHOP_UNIT, query_piece_row, query_piece_col)
-	# cv2.imwrite(join(cur_dir, "query.jpg"),query_im)
-
-	# best_piece_row = best_piece_idx/CHOP_UNIT
-	# best_piece_col = best_piece_idx%CHOP_UNIT
-	# result_im = read_standarized_image_full(train_image_path[best_image_idx].strip())
-	# result_im = draw_grid(result_im, CHOP_UNIT, best_piece_row, best_piece_col)
-	# cv2.imwrite(join(cur_dir, "result.jpg"),result_im)
-
-query_im = read_standarized_image_full(test_image_path)
-for piece_idx in good_piece_idx:
-	query_piece_row = piece_idx/CHOP_UNIT
-	query_piece_col = piece_idx%CHOP_UNIT
-	query_im = draw_grid(query_im, CHOP_UNIT, query_piece_row, query_piece_col)
-cv2.imwrite(join(test_image_result_dir, "%d.jpg"%VALUE_OF_K),query_im)
+	good_kp_list = kps
+	# print len(good_kp_list)
+	query_im = read_standarized_image_full(test_image_path)
+	for kp in good_kp_list:
+		px, py = kp.pt
+		cv2.circle(query_im, (int(px), int(py)), 5, (0,255,0))
+	cv2.imwrite(join(test_image_result_dir, "%d.jpg"%VALUE_OF_K),query_im)
 
 
 

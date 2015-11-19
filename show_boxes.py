@@ -9,6 +9,7 @@ from scipy.io import loadmat, savemat
 # from scipy.cluster.vq import vq
 # from itertools import groupby as g
 from datetime import datetime
+import xml.etree.ElementTree
 
 def get_classes(datasetpath):
 	classes = [files for files in listdir(datasetpath) if isdir(join(datasetpath, files))]
@@ -59,6 +60,18 @@ def draw_grid(im, unit, row, col):
 
 	return im
 
+def draw_box(im, x_min, y_min, x_max, y_max):
+	pt1 = (x_min, y_min)
+	pt2 = (x_max,y_min)
+	pt3 = (x_max,y_max)
+	pt4 = (x_min,y_max)
+	cv2.line(im, pt1, pt2, (255,255,255))
+	cv2.line(im, pt2, pt3, (255,255,255))
+	cv2.line(im, pt3, pt4, (255,255,255))
+	cv2.line(im, pt4, pt1, (255,255,255))
+
+	return im
+
 
 
 working_dir = "test_dir"
@@ -72,8 +85,8 @@ acceptable_image_formats = [".jpg", ".png", ".jpeg"]
 CHOP_UNIT = 10
 NUM_OF_PIECES = CHOP_UNIT*CHOP_UNIT
 
-detector = cv2.SIFT(nfeatures=1000)
-
+detector = cv2.SIFT()
+# detector = cv2.SIFT(nfeatures=1000)
 
 
 classes = get_classes(train_dir)
@@ -98,10 +111,12 @@ if isfile(join(result_dir, "sift_features.mat")):
 	sift_features = obj['sift_features']
 	train_image_path = obj['train_image_path']
 	train_image_classes = obj['train_image_classes'][0]
+	class_mapping = obj['class_mapping']
 	print sift_features.shape
 	print sift_inverted_indexes.shape
 	print train_image_path.shape
 	print train_image_classes.shape
+	print class_mapping.shape
 else:
 	sift_inverted_indexes = []
 	sift_features = []
@@ -128,89 +143,33 @@ else:
 		"average_num_images_per_class":average_num_images_per_class
 		})
 
-test_image_path = join(train_dir, "n01440764", "n01440764_37.JPEG")
-test_image_class = 0
-test_image_idx = 2
-VALUE_OF_K = 10
-kps, descrs, shape = detect_sift_features(test_image_path, detector)
-height_unit = shape[0]/CHOP_UNIT + 1
-width_unit = shape[1]/CHOP_UNIT + 1
+show_box_dir = join(result_dir, "boxes")
 
-# for test only
-# test_im = standarizeImage(cv2.imread(test_image_path))
+for image_idx, test_image_path in enumerate(train_image_path):
+	test_image_path = test_image_path.strip()
+	class_folder_name = class_mapping[train_image_classes[image_idx]]
+	show_box_class_dir = join(show_box_dir, class_folder_name)
+	if not isdir(show_box_class_dir):
+		makedirs(show_box_class_dir)
 
+	box_dir = join(working_dir, "boxes", class_folder_name)
+	box_file_name = join(box_dir, splitext(basename(test_image_path))[0]+".xml")
+	query_im = cv2.imread(test_image_path)
+	if isfile(box_file_name):
+		e = xml.etree.ElementTree.parse(box_file_name).getroot()
+		objs = []
+		for child in e:
+			if child.tag == "object":
+				bndbox = child[4]
+				xmin = int(bndbox[0].text)
+				ymin = int(bndbox[1].text)
+				xmax = int(bndbox[2].text)
+				ymax = int(bndbox[3].text)
+				query_im = draw_box(query_im, xmin, ymin, xmax, ymax)
+			
+	
 
-test_image_features_in_pieces = [[] for x in range(CHOP_UNIT*CHOP_UNIT)]
-
-
-for kp_idx, kp in enumerate(kps):
-	px, py = kp.pt
-
-	# for test only
-	# cv2.circle(test_im, (int(px), int(py)), 5, (0,255,0))
-
-	row = int(py)/height_unit
-	col = int(px)/width_unit
-	piece_idx = row*CHOP_UNIT + col
-	test_image_features_in_pieces[piece_idx].append(descrs[kp_idx])
-
-# for test only
-# dist = [len(features) for features in test_image_features_in_pieces]
-# print dist
-# cv2.imwrite(join(result_dir, "test_kp_position.jpg"), test_im)
-
-test_image_result_dir = join(result_dir, "good_piece")
-if not isdir(test_image_result_dir):
-	makedirs(test_image_result_dir)
-
-matcher = cv2.BFMatcher()
-
-good_piece_idx = []
-for piece_idx, sift_feature_of_cur_piece in enumerate(test_image_features_in_pieces):
-
-	sift_features_without_this_image = [sift_features[f_idx] for f_idx in xrange(0, len(sift_features)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
-	sift_inverted_indexes_without_this_image = [sift_inverted_indexes[f_idx] for f_idx in xrange(0, len(sift_inverted_indexes)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
-	sift_features_without_this_image = np.array(sift_features_without_this_image, dtype=np.float32)
-
-	sift_feature_of_cur_piece = np.array(sift_feature_of_cur_piece, dtype=np.float32)
-
-	matches = matcher.knnMatch(sift_feature_of_cur_piece, sift_features_without_this_image, k=VALUE_OF_K)
-	# matches = matcher.match(sift_feature_of_cur_piece, sift_features_without_this_image)
-	vote_matrix = np.zeros((len(train_image_path),NUM_OF_PIECES))
-	for knnMatch in matches:
-		for match in knnMatch:
-			(train_image_idx, train_piece_idx) = sift_inverted_indexes_without_this_image[match.trainIdx]
-			vote_matrix[train_image_idx][train_piece_idx] += 1
-	best_idx = np.argmax(vote_matrix)
-	best_image_idx = best_idx/NUM_OF_PIECES
-	best_piece_idx = best_idx%NUM_OF_PIECES
-	best_image_class = train_image_classes[best_image_idx]
-	if best_image_class == test_image_class and best_image_idx != test_image_idx:
-		good_piece_idx.append(piece_idx)
-
-# this part is for outputing the best match for each piece in a given test image
-	# cur_dir = join(test_image_result_dir, "%d"%piece_idx)
-	# if not isdir(cur_dir):
-	# 	makedirs(cur_dir)
-
-	# query_piece_row = piece_idx/CHOP_UNIT
-	# query_piece_col = piece_idx%CHOP_UNIT
-	# query_im = read_standarized_image_full(test_image_path)
-	# query_im = draw_grid(query_im, CHOP_UNIT, query_piece_row, query_piece_col)
-	# cv2.imwrite(join(cur_dir, "query.jpg"),query_im)
-
-	# best_piece_row = best_piece_idx/CHOP_UNIT
-	# best_piece_col = best_piece_idx%CHOP_UNIT
-	# result_im = read_standarized_image_full(train_image_path[best_image_idx].strip())
-	# result_im = draw_grid(result_im, CHOP_UNIT, best_piece_row, best_piece_col)
-	# cv2.imwrite(join(cur_dir, "result.jpg"),result_im)
-
-query_im = read_standarized_image_full(test_image_path)
-for piece_idx in good_piece_idx:
-	query_piece_row = piece_idx/CHOP_UNIT
-	query_piece_col = piece_idx%CHOP_UNIT
-	query_im = draw_grid(query_im, CHOP_UNIT, query_piece_row, query_piece_col)
-cv2.imwrite(join(test_image_result_dir, "%d.jpg"%VALUE_OF_K),query_im)
+	cv2.imwrite(join(show_box_class_dir, basename(test_image_path)),query_im)
 
 
 
