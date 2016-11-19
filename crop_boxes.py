@@ -109,14 +109,14 @@ if isfile(join(result_dir, "sift_features.mat")):
 	obj = loadmat(join(result_dir, "sift_features.mat"))
 	sift_inverted_indexes = obj['sift_inverted_indexes']
 	sift_features = obj['sift_features']
-	train_image_path = obj['train_image_path']
-	train_image_classes = obj['train_image_classes'][0]
-	class_mapping = obj['class_mapping']
-	print sift_features.shape
-	print sift_inverted_indexes.shape
-	print train_image_path.shape
-	print train_image_classes.shape
-	print class_mapping.shape
+	# train_image_path = obj['train_image_path']
+	# train_image_classes = obj['train_image_classes'][0]
+	# class_mapping = obj['class_mapping']
+	# print sift_features.shape
+	# print sift_inverted_indexes.shape
+	# print train_image_path.shape
+	# print train_image_classes.shape
+	# print class_mapping.shape
 else:
 	sift_inverted_indexes = []
 	sift_features = []
@@ -155,21 +155,24 @@ for image_idx, test_image_path in enumerate(train_image_path):
 	box_dir = join(working_dir, "boxes", class_folder_name)
 	box_file_name = join(box_dir, splitext(basename(test_image_path))[0]+".xml")
 	query_im = cv2.imread(test_image_path)
+	box = None
+	num_of_boxes = 0
 	if isfile(box_file_name):
 		e = xml.etree.ElementTree.parse(box_file_name).getroot()
 		objs = []
 		for child in e:
 			if child.tag == "object":
-				bndbox = child[4]
-				xmin = int(bndbox[0].text)
-				ymin = int(bndbox[1].text)
-				xmax = int(bndbox[2].text)
-				ymax = int(bndbox[3].text)
-				query_im = draw_box(query_im, xmin, ymin, xmax, ymax)
-			
-	
+				num_of_boxes += 1
+				box = child
 
-	cv2.imwrite(join(show_box_class_dir, basename(test_image_path)),query_im)
+	if num_of_boxes == 1:
+		bndbox = box[4]
+		xmin = int(bndbox[0].text)
+		ymin = int(bndbox[1].text)
+		xmax = int(bndbox[2].text)
+		ymax = int(bndbox[3].text)
+		query_im = query_im[ymin:ymax, xmin:xmax]
+		cv2.imwrite(join(show_box_class_dir, basename(test_image_path)),query_im)
 
 
 

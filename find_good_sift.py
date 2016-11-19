@@ -2,7 +2,7 @@ import cv2
 # import sys
 from os.path import isdir, join, isfile, splitext, basename
 from os import makedirs, listdir
-# from random import sample
+from random import sample
 import numpy as np
 # from sklearn.cluster.k_means_ import k_means
 from scipy.io import loadmat, savemat
@@ -32,9 +32,7 @@ def detect_sift_features(imagepath, detector):
 	return (kps, descrs, im.shape)
 
 def read_standarized_image_full(imagepath):
-	# print imagepath
 	im = cv2.imread(imagepath)
-	# print im
 	return standarizeImage(im)
 
 def draw_grid(im, unit, row, col):
@@ -56,7 +54,6 @@ def draw_grid(im, unit, row, col):
 	cv2.line(im, pt3, pt4, (255,255,255))
 	cv2.line(im, pt4, pt1, (255,255,255))
 
-
 	return im
 
 
@@ -69,9 +66,8 @@ if not isdir(result_dir):
 	makedirs(result_dir)
 
 acceptable_image_formats = [".jpg", ".png", ".jpeg"]
+SIFT_SAMPLE_SIZE = 200000
 CHOP_UNIT = 10
-NUM_OF_PIECES = CHOP_UNIT*CHOP_UNIT
-
 detector = cv2.SIFT()
 # detector = cv2.SIFT(nfeatures=1000)
 
@@ -109,6 +105,8 @@ else:
 	sift_features = []
 	
 	for train_image_idx, image_path in enumerate(train_image_path):
+
+		print train_image_idx
 		kps, descrs, shape = detect_sift_features(image_path, detector)
 		height_unit = shape[0]/CHOP_UNIT + 1
 		width_unit = shape[1]/CHOP_UNIT + 1
@@ -118,7 +116,8 @@ else:
 			col = int(px)/width_unit
 			piece_idx = row*CHOP_UNIT + col
 			sift_inverted_indexes.append((train_image_idx, piece_idx))
-		sift_features.append(descrs)
+		if len(kps) > 0:
+			sift_features.append(descrs)
 	sift_features = np.concatenate(sift_features, axis=0)
 	print sift_features.shape
 	savemat(join(result_dir, "sift_features.mat"), {
@@ -129,8 +128,12 @@ else:
 		"class_mapping":class_mapping,
 		"average_num_images_per_class":average_num_images_per_class
 		})
+
 matcher = cv2.BFMatcher()
 for image_idx, test_image_path in enumerate(train_image_path):
+
+	if image_idx % 100 != 0:
+		continue
 
 	# test_image_path = join(train_dir, "n01440764", "n01440764_39.JPEG")
 	test_image_path = test_image_path.strip()
@@ -139,27 +142,30 @@ for image_idx, test_image_path in enumerate(train_image_path):
 	VALUE_OF_K = 50
 	kps, descrs, shape = detect_sift_features(test_image_path, detector)
 
-	test_image_result_dir = join(result_dir, "demo_sift", basename(test_image_path))
+	test_image_result_dir = join(result_dir, "good_crop_sift", basename(test_image_path))
 	# test_image_result_dir = join(result_dir, "good_sift", basename(test_image_path))
 	
 	if not isdir(test_image_result_dir):
 		makedirs(test_image_result_dir)
 	
-	# sift_features_without_this_image = [sift_features[f_idx] for f_idx in xrange(0, len(sift_features)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
-	# sift_inverted_indexes_without_this_image = [sift_inverted_indexes[f_idx] for f_idx in xrange(0, len(sift_inverted_indexes)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
-	# sift_features_without_this_image = np.array(sift_features_without_this_image, dtype=np.float32)
-	# matches = matcher.knnMatch(descrs, sift_features_without_this_image, k=VALUE_OF_K)
-	# good_kp_list = []
-	# for kp_idx, knnMatch in enumerate(matches):
-	# 	vote_matrix = np.zeros((len(class_mapping)))
-	# 	for match in knnMatch:
-	# 		(train_image_idx, train_piece_idx) = sift_inverted_indexes_without_this_image[match.trainIdx]
-	# 		vote_matrix[train_image_classes[train_image_idx]] += 1
-	# 	best_class_idx = np.argmax(vote_matrix)
-	# 	if best_class_idx == test_image_class:
-	# 		good_kp_list.append(kps[kp_idx])
+	sift_features_without_this_image = [sift_features[f_idx] for f_idx in xrange(0, len(sift_features)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
+	sift_inverted_indexes_without_this_image = [sift_inverted_indexes[f_idx] for f_idx in xrange(0, len(sift_inverted_indexes)) if sift_inverted_indexes[f_idx][0] != test_image_idx]
 
-	good_kp_list = kps
+	sift_features_sampled_indexes = sample([x for x in xrange(0,len(sift_inverted_indexes_without_this_image))], SIFT_SAMPLE_SIZE)
+	sift_features_without_this_image = [sift_features_without_this_image[i] for i in sift_features_sampled_indexes]
+	sift_features_without_this_image = np.array(sift_features_without_this_image, dtype=np.float32)
+
+	matches = matcher.knnMatch(descrs, sift_features_without_this_image, k=VALUE_OF_K)
+	good_kp_list = []
+	for kp_idx, knnMatch in enumerate(matches):
+		vote_matrix = np.zeros((len(class_mapping)))
+		for match in knnMatch:
+			(train_image_idx, train_piece_idx) = sift_inverted_indexes_without_this_image[sift_features_sampled_indexes[match.trainIdx]]
+			vote_matrix[train_image_classes[train_image_idx]] += 1
+		best_class_idx = np.argmax(vote_matrix)
+		if best_class_idx == test_image_class:
+			good_kp_list.append(kps[kp_idx])
+
 	# print len(good_kp_list)
 	query_im = read_standarized_image_full(test_image_path)
 	for kp in good_kp_list:
@@ -167,6 +173,11 @@ for image_idx, test_image_path in enumerate(train_image_path):
 		cv2.circle(query_im, (int(px), int(py)), 5, (0,255,0))
 	cv2.imwrite(join(test_image_result_dir, "%d.jpg"%VALUE_OF_K),query_im)
 
+	# query_im = read_standarized_image_full(test_image_path)
+	# for kp in kps:
+	# 	px, py = kp.pt
+	# 	cv2.circle(query_im, (int(px), int(py)), 5, (0,255,0))
+	# cv2.imwrite(join(test_image_result_dir, "original.jpg"),query_im)
 
 
 # let's take an image, divide by 100 parts
